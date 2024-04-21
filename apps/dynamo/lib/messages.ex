@@ -45,9 +45,9 @@ defmodule Dynamo.GetResponse do
   alias __MODULE__
   @enforce_keys [:key, :values, :nonce, :success]
   defstruct(
-    key: nil
+    key: nil,
     values: nil,
-    nonce, nil,
+    nonce: nil,
     success: nil
   )
 
