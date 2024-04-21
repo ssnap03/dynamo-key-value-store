@@ -28,10 +28,10 @@ defmodule Dynamo do
     vclock: %{},
 
     # quorum count per client
-    response_count: %{}
+    response_count: %{},
 
     # value-version map
-    version_map: %{}
+    version_map: %{},
 
     nonce: 0,
 
@@ -72,7 +72,7 @@ defmodule Dynamo do
 
   def broadcast(state, message) do
     state.view
-    |> Enum.map(fn pid -> 
+    |> Enum.map(fn pid ->
       send(pid, message) end)
   end
 
@@ -93,39 +93,50 @@ defmodule Dynamo do
 
         nnc = state.nonce + 1
 
-        state = %{state | 
+        state = %{state |
         nonce: nnc,
-        response_count: Map.put(state.reponse_count, nnc, 0)
+        response_count: Map.put(state.reponse_count, nnc, 0),
         version_map: Map.put(state.version_map, nnc, [])}
-        
+
         msg = Dynamo.GetRequest.new(key, nonce)
 
         broadcast(state, msg)
 
         node(state)
-        
+
       {sender, {:put, key, v}} ->
-        
 
+        # state = update_vector_clock(state)
+        state = %{state | nonce: state.nonce+1}
+        response_count = Map.put(state.response_count, state.nonce, {0, sender})
+        value_version = {v, state.vclock}
+        state = %{state | response_count: response_count, value_version: value_version}
+        # state = kv_store_set(state, key, value_version)
+        msg = Dynamo.PutRequest.new(key, value_version, state.nonce)
+        broadcast(state,msg)
 
-
+        node(state)
 
       {sender,
       %Dynamo.GetRequest{
         key: key,
         nonce: nonce
       }} ->
-        msg = GetResponse(key, kv_store_get(state, key), nonce, true)
+        msg = Dynamo.GetResponse.new(key, kv_store_get(state, key), nonce, true)
         send(sender, msg)
         node(state)
-      
+
       {sender,
       %Dynamo.PutRequest{
         key: key,
         value: value,
         nonce: nonce
       }} ->
-      
+        state = kv_store_put(state,key,value)
+        msg = Dynamo.PutResponse.new(key,nonce,true)
+        send(sender,msg)
+        node(state)
+
       {sender,
       %Dynamo.GetResponse{
         key: key,
@@ -133,13 +144,45 @@ defmodule Dynamo do
         nonce: nonce,
         success: succ
       }} ->
-      
+        if Map.has_key?(state.responce_count, nonce) do
+          {count, client} = Map.get(state.response.count, nonce)
+          state = %{state | respnose_count: Map.put(state.response_count, nonce, {count+1, client})}
+
+          if count+1 < state.R do
+            # state = %{state | respnose_count: Map.put(state.response_count, nonce, state.response_count.get(nonce)+1) }
+            node(state)
+          else
+          {count, client} = Map.get(state.response_count, nonce)
+          send(client, {:get, key, values})
+          state = %{state | response_count: Map.delete(state.response_count, nonce), value_version: Map.delete(state.value_version,nonce)}
+
+          node(state)
+          end
+        end
+        node(state)
+
       {sender,
       %Dynamo.PutResponse{
         key: key,
         nonce: nonce,
         success: succ
       }} ->
+
+        if Map.has_key?(state.responce_count, nonce) do
+          {count, client} = Map.get(state.response.count, nonce)
+          state = %{state | respnose_count: Map.put(state.response_count, nonce, {count+1, client})}
+
+          if count+1 < state.W do
+            # state = %{state | respnose_count: Map.put(state.response_count, nonce, state.response_count.get(nonce)+1) }
+            node(state)
+          else
+          {count, client} = Map.get(state.response_count, nonce)
+          send(client, {:put, key, :ok})
+          state = %{state | response_count: Map.delete(state.response_count, nonce)}
+          node(state)
+          end
+        end
+        node(state)
     end
   end
 

@@ -7,7 +7,7 @@ defmodule Dynamo.GetRequest do
   # Require that any GetRequest contains
   # a :key.
   @enforce_keys [
-    :key
+    :key,
     :nonce
   ]
   defstruct(
