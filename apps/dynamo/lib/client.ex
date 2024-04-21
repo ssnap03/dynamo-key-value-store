@@ -30,7 +30,9 @@ defmodule Dynamo.Client do
     Send a get request to the RSM.
     """
     def get(client_id, server_id, key) do
-      msg = Dynamo
+      msg = Dynamo.GetRequest.new(
+        
+      )
       send(server_id, {:get, key})
     end
   
