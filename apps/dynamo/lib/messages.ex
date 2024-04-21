@@ -123,8 +123,8 @@ defmodule Dynamo.PutResponse do
   alias __MODULE__
   @enforce_keys [:key, :nonce, :success]
   defstruct(
-    key: nil
-    nonce, nil,
+    key: nil,
+    nonce: nil,
     success: nil
   )
 
