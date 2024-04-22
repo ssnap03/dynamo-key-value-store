@@ -31,7 +31,7 @@ defmodule Dynamo do
     response_count: %{},
 
     # value-version map
-    version_map: %{},
+    value_version: %{},
 
     nonce: 0,
 
@@ -69,10 +69,11 @@ defmodule Dynamo do
   end
 
   defp uniq([x | rest], found) do
-    if MapSet.member?(found, x.vc) do
+    {v,vc} = x
+    if MapSet.member?(found, vc) do
       uniq(rest, found)
     else
-      [x | uniq(rest, MapSet.put(found, x.vc))]
+      [x | uniq(rest, MapSet.put(found, vc))]
     end
   end
 
@@ -227,8 +228,8 @@ defmodule Dynamo do
 
         state = %{state |
         nonce: nnc,
-        response_count: Map.put(state.reponse_count, nnc, 0),
-        version_map: Map.put(state.version_map, nnc, [])}
+        response_count: Map.put(state.response_count, nnc, {0,sender}),
+        value_version: Map.put(state.value_version, nnc, [])}
 
         msg = Dynamo.GetRequest.new(key, nnc)
 
@@ -242,7 +243,7 @@ defmodule Dynamo do
         state = %{state | nonce: state.nonce+1}
         response_count = Map.put(state.response_count, state.nonce, {0, sender})
         value_version = {v, state.vclock}
-        state = %{state | response_count: response_count, value_version: value_version}
+        state = %{state | response_count: response_count}
         # state = kv_store_set(state, key, value_version)
         msg = Dynamo.PutRequest.new(key, value_version, state.nonce)
         broadcast(state,msg)
@@ -277,8 +278,10 @@ defmodule Dynamo do
         success: succ
       }} ->
         if Map.has_key?(state.response_count, nonce) do
-          {count, client} = Map.get(state.response.count, nonce)
-          state = %{state | respnose_count: Map.put(state.response_count, nonce, {count+1, client})}
+          #IO.puts("#{inspect(Map.get(state.response_count, nonce))}")
+          {count, client} = Map.get(state.response_count, nonce)
+          state = %{state | response_count: Map.put(state.response_count, nonce, {count+1, client})}
+          #IO.puts("#{inspect(Map.get(state.value_version, nonce))}")
           non_stale_values = remove_stale_values(Map.get(state.value_version, nonce),  values)
           if count+1 < state.read_quorum do
             # state = %{state | respnose_count: Map.put(state.response_count, nonce, state.response_count.get(nonce)+1) }
@@ -286,7 +289,7 @@ defmodule Dynamo do
             dynamo_node(state)
           else
             return_vals = Enum.map(non_stale_values, fn {v, _} -> v end)
-            send(client, {:get, key, return_vals})
+            send(client, {:get, key, return_vals, sender})
             state = %{state | response_count: Map.delete(state.response_count, nonce), value_version: Map.delete(state.value_version,nonce)}
 
             dynamo_node(state)
@@ -302,15 +305,15 @@ defmodule Dynamo do
       }} ->
 
         if Map.has_key?(state.response_count, nonce) do
-          {count, client} = Map.get(state.response.count, nonce)
-          state = %{state | respnose_count: Map.put(state.response_count, nonce, {count+1, client})}
+          {count, client} = Map.get(state.response_count, nonce)
+          state = %{state | response_count: Map.put(state.response_count, nonce, {count+1, client})}
 
           if count+1 < state.write_qourum do
             # state = %{state | respnose_count: Map.put(state.response_count, nonce, state.response_count.get(nonce)+1) }
             dynamo_node(state)
           else
             {count, client} = Map.get(state.response_count, nonce)
-            send(client, {:put, key, :ok})
+            send(client, {:put, key, :ok, sender})
             state = %{state | response_count: Map.delete(state.response_count, nonce)}
             dynamo_node(state)
           end
