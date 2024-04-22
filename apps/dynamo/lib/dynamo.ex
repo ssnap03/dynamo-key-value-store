@@ -35,8 +35,8 @@ defmodule Dynamo do
 
     nonce: 0,
 
-    R: 0,
-    W: 0
+    read_quorum: 0,
+    write_qourum: 0
   )
 
   @doc """
@@ -56,18 +56,138 @@ defmodule Dynamo do
       ) do
     %Dynamo{
       view: view,
-      R: read_quorum,
-      W: write_quorum
+      read_quorum: read_quorum,
+      write_qourum: write_quorum
     }
   end
+
+  """
+  vector clock helpers
+  """
+  def uniq(list) do
+      uniq(list, MapSet.new())
+  end
+
+  defp uniq([x | rest], found) do
+    if MapSet.member?(found, x.vc) do
+      uniq(rest, found)
+    else
+      [x | uniq(rest, MapSet.put(found, x.vc))]
+    end
+  end
+
+  defp uniq([], _) do
+    []
+  end
+
+  def get_recent_value([head1|tail], l2, acc) do
+      acc = loop1(head1, l2, acc)
+      get_recent_value(tail, l2, acc)
+  end
+
+  def get_recent_value([], l2, acc) do
+    acc
+  end
+
+
+  def loop1(head1, [head2 | tail2], acc) do
+    if compare_vectors(head1.vc, head2.vc) != :before do
+      loop1(head1, tail2, acc)
+    else
+      acc
+    end
+  end
+
+  def loop1(val1, [], acc) do
+    acc ++ [val1]
+  end
+
+  def remove_stale_values(l1, l2) do
+    uniq(get_recent_value(l1, l2, []) ++ get_recent_value(l2, l1, []))
+  end
+
+  @spec combine_vector_component(
+          non_neg_integer(),
+          non_neg_integer()
+        ) :: non_neg_integer()
+  defp combine_vector_component(x, y) do
+    if x > y do
+      x 
+    else 
+      y
+    end
+  end
+
+  @spec combine_vector_clocks(map(), map()) :: map()
+  def combine_vector_clocks(vclock1, vclock2) do
+    Map.merge(vclock1, vclock2, fn _k, v1, v2 -> combine_vector_component(v1, v2) end)
+  end
+
+  def update_vector_clock(state) do
+    %{state | vclock: Map.update!(state.vclock, whoami(), fn x -> x + 1 end)}
+  end
+
+  @spec equalize_vclock_lengths(map(), map()) :: map()
+  defp equalize_vclock_lengths(v1, v2) do
+    v1_add = for {k, _} <- v2, !Map.has_key?(v1, k), do: {k, 0}
+    Map.merge(v1, Enum.into(v1_add, %{}))
+  end
+
+  # Compare two components of a vector clock c1 and c2.
+  # Return @before if a vector of the form [c1] happens before [c2].
+  # Return @after if a vector of the form [c2] happens before [c1].
+  # Return @concurrent if neither of the above two are true.
+  @spec compare_component(
+          non_neg_integer(),
+          non_neg_integer()
+        ) :: :before | :after | :concurrent
+  def compare_component(c1, c2) do
+    cond do
+      c1 < c2 -> :before
+      c1 > c2 -> :after
+      c1 = c2 -> :concurrent
+    end
+  end
+
+  @doc """
+  Compare two vector clocks v1 and v2.
+  Returns @before if v1 happened before v2.
+  Returns @hafter if v2 happened before v1.
+  Returns @concurrent if neither of the above hold.
+  """
+  @spec compare_vectors(map(), map()) :: :before | :after | :concurrent
+  def compare_vectors(v1, v2) do
+    # First make the vectors equal length.
+    v1 = equalize_vclock_lengths(v1, v2)
+    v2 = equalize_vclock_lengths(v2, v1)
+    # `compare_result` is a list of elements from
+    # calling `compare_component` on each component of
+    # `v1` and `v2`. Given this list you need to figure
+    # out whether
+    compare_result =
+      Map.values(
+        Map.merge(v1, v2, fn _k, c1, c2 -> compare_component(c1, c2) end)
+      )
+    a = Enum.all?(compare_result, fn x -> x == :before or x == :concurrent end)
+    b = Enum.any?(compare_result, fn x -> x == :before end)
+    c = Enum.all?(compare_result, fn x -> x == :after or x == :concurrent end)
+    d = Enum.any?(compare_result, fn x -> x == :after end)
+    e = Enum.all?(compare_result, fn x -> x == :concurrent end)
+    cond do 
+      a and b -> :before
+      c and d -> :after
+      b and d or e -> :concurrent
+    end
+  end
+
 
   @doc """
   Initialize server. Init vector clock.
   """
-  def init_node(state) do
+  def init_dynamo_node(state) do
     new_vclock = Map.put(state.vclock, whoami(), 0)
     state = %{state | vclock: new_vclock}
-    node(state)
+    dynamo_node(state)
   end
 
   def broadcast(state, message) do
@@ -83,11 +203,23 @@ defmodule Dynamo do
     end
   end
 
-  def kv_store_set(state, key, v) do
-    %{state | kv_store: Map.put(state.kv_store, key, v)}
+  def kv_store_put(state, key, v) do
+    {val, clock} = v
+    if Map.get(state.kv_store, key) == nil do 
+      %{state | vclock: combine_vector_clocks(state.vclock, clock),
+                        kv_store: Map.put(state.kv_store, key, [v])}
+    else 
+      cur_vals = Map.get(state.kv_store, key)
+      concurrent_vals = Enum.filter(cur_vals, fn cur_v -> {_, cur_clock} = cur_v
+                        if compare_vectors(cur_clock, clock) == :concurrent do cur_v end end)
+    
+      concurrent_vals = uniq([v] ++ concurrent_vals)
+      %{state | vclock: combine_vector_clocks(state.vclock, clock),
+                        kv_store: Map.put(state.kv_store, key, concurrent_vals)}
+    end
   end
 
-  def node(state) do
+  def dynamo_node(state) do
     receive do
       {sender, {:get, key}} ->
 
@@ -98,15 +230,15 @@ defmodule Dynamo do
         response_count: Map.put(state.reponse_count, nnc, 0),
         version_map: Map.put(state.version_map, nnc, [])}
 
-        msg = Dynamo.GetRequest.new(key, nonce)
+        msg = Dynamo.GetRequest.new(key, nnc)
 
         broadcast(state, msg)
 
-        node(state)
+        dynamo_node(state)
 
       {sender, {:put, key, v}} ->
 
-        # state = update_vector_clock(state)
+        state = update_vector_clock(state)
         state = %{state | nonce: state.nonce+1}
         response_count = Map.put(state.response_count, state.nonce, {0, sender})
         value_version = {v, state.vclock}
@@ -115,7 +247,7 @@ defmodule Dynamo do
         msg = Dynamo.PutRequest.new(key, value_version, state.nonce)
         broadcast(state,msg)
 
-        node(state)
+        dynamo_node(state)
 
       {sender,
       %Dynamo.GetRequest{
@@ -124,7 +256,7 @@ defmodule Dynamo do
       }} ->
         msg = Dynamo.GetResponse.new(key, kv_store_get(state, key), nonce, true)
         send(sender, msg)
-        node(state)
+        dynamo_node(state)
 
       {sender,
       %Dynamo.PutRequest{
@@ -135,7 +267,7 @@ defmodule Dynamo do
         state = kv_store_put(state,key,value)
         msg = Dynamo.PutResponse.new(key,nonce,true)
         send(sender,msg)
-        node(state)
+        dynamo_node(state)
 
       {sender,
       %Dynamo.GetResponse{
@@ -144,22 +276,23 @@ defmodule Dynamo do
         nonce: nonce,
         success: succ
       }} ->
-        if Map.has_key?(state.responce_count, nonce) do
+        if Map.has_key?(state.response_count, nonce) do
           {count, client} = Map.get(state.response.count, nonce)
           state = %{state | respnose_count: Map.put(state.response_count, nonce, {count+1, client})}
-
-          if count+1 < state.R do
+          non_stale_values = remove_stale_values(Map.get(state.value_version, nonce),  values)
+          if count+1 < state.read_quorum do
             # state = %{state | respnose_count: Map.put(state.response_count, nonce, state.response_count.get(nonce)+1) }
-            node(state)
+            state = %{state | value_version: Map.put(state.value_version, nonce, non_stale_values)}
+            dynamo_node(state)
           else
-          {count, client} = Map.get(state.response_count, nonce)
-          send(client, {:get, key, values})
-          state = %{state | response_count: Map.delete(state.response_count, nonce), value_version: Map.delete(state.value_version,nonce)}
+            return_vals = Enum.map(non_stale_values, fn {v, _} -> v end)
+            send(client, {:get, key, return_vals})
+            state = %{state | response_count: Map.delete(state.response_count, nonce), value_version: Map.delete(state.value_version,nonce)}
 
-          node(state)
+            dynamo_node(state)
           end
         end
-        node(state)
+        dynamo_node(state)
 
       {sender,
       %Dynamo.PutResponse{
@@ -168,21 +301,21 @@ defmodule Dynamo do
         success: succ
       }} ->
 
-        if Map.has_key?(state.responce_count, nonce) do
+        if Map.has_key?(state.response_count, nonce) do
           {count, client} = Map.get(state.response.count, nonce)
           state = %{state | respnose_count: Map.put(state.response_count, nonce, {count+1, client})}
 
-          if count+1 < state.W do
+          if count+1 < state.write_qourum do
             # state = %{state | respnose_count: Map.put(state.response_count, nonce, state.response_count.get(nonce)+1) }
-            node(state)
+            dynamo_node(state)
           else
-          {count, client} = Map.get(state.response_count, nonce)
-          send(client, {:put, key, :ok})
-          state = %{state | response_count: Map.delete(state.response_count, nonce)}
-          node(state)
+            {count, client} = Map.get(state.response_count, nonce)
+            send(client, {:put, key, :ok})
+            state = %{state | response_count: Map.delete(state.response_count, nonce)}
+            dynamo_node(state)
           end
         end
-        node(state)
+        dynamo_node(state)
     end
   end
 

@@ -57,14 +57,14 @@ defmodule Dynamo.GetResponse do
   @spec new(any(), list(any()), non_neg_integer(), boolean()) ::
           %GetResponse{
             key: any(),
-            value: list(any()),
+            values: list(any()),
             nonce: non_neg_integer(),
             success: boolean()
           }
   def new(key, value, nonce, success) do
     %GetResponse{
       key: key,
-      value: value,
+      values: value,
       nonce: nonce,
       success: success
     }
