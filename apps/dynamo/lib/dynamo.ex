@@ -39,7 +39,7 @@ defmodule Dynamo do
     write_qourum: 0,
 
     # gossip timer
-    gossip_timeout: 15_000,
+    gossip_timeout: 4000,
     gossip_timer: nil,
     rtt_timeout: 400,
     rtt_timer: nil,
@@ -257,9 +257,9 @@ defmodule Dynamo do
   def get_random_neighbour(state) do
     random_neighbour = state.view |> Enum.filter(fn pid -> pid != whoami() end) |> Enum.random()
     state = %{state | gossip_term: state.gossip_term+1, neighbour: random_neighbour}
-    send(random_neighbour,{:ping,state.gossip_term})
     rtt= Emulation.timer(state.rtt_timeout,:rtt_timeout)
     no_ack= Emulation.timer(state.no_ack_timeout,:no_ack_timeout)
+    send(random_neighbour,{:ping,state.gossip_term})
     %{state | rtt_timer: rtt,no_ack_timer: no_ack}
   end
 
@@ -431,10 +431,10 @@ defmodule Dynamo do
         send(pinger, {:ack, term})
         dynamo_node(state)
 
-      :no_ack_timer -> 
+      :no_ack_timeout -> 
               IO.puts("no ack timer  received in #{inspect(whoami())} ")
 
-        broadcast(state.view, {state.neighbour, :failed})
+        broadcast(state, {state.neighbour, :failed})
         dynamo_node(state)
         
 
@@ -450,6 +450,7 @@ defmodule Dynamo do
 
       {sender, :check_view} -> 
               IO.puts("check view received in #{inspect(whoami())} ")
+              IO.puts("sending #{inspect(state.view)}")
 
         send(sender, state.view)
         dynamo_node(state)

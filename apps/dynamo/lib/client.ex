@@ -39,4 +39,10 @@ defmodule Dynamo.Client do
       send(replica,{:put,key,value})
 
     end
+
+    def check_view(client,replica) do
+  
+      send(replica,:check_view)
+
+    end
   end

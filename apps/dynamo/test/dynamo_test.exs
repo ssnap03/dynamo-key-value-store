@@ -6,26 +6,7 @@ defmodule DynamoTest do
   import Kernel,
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2, exit: 2]
 
-  def check_view(views) do 
-    receive do
-      
-      {:a, view} -> m = Map.put(views, :a, view)
-              if(length(Map.get(views, :c)) != 0) do 
-                views
-              else 
-                check_view(views)
-              end
-      {:c, view} -> m = Map.put(views, :c, view)
-              if(length(Map.get(views, :a)) != 0) do 
-                views
-              else 
-                check_view(views)
-              end
-      
-      _ -> check_view(views)
-    end
-  
-  end
+ 
   test "check basic functionaly of kv-store : gets and puts" do
     Emulation.init()
     
@@ -81,7 +62,7 @@ Dynamo.Client.get(client, :a, "c")
   after
     Emulation.terminate()
   end
-
+  
   test "check basic functionality of gossip protocol" do
     Emulation.init()
     
@@ -96,22 +77,37 @@ Dynamo.Client.get(client, :a, "c")
 
     #Process.exit(pid, :normal)
     receive do 
-      after 30_000 -> 
-        send(:a, :check_view)
-        send(:c, :check_view)
-        views = check_view(%{})
-        a_view = Map.get(views, :a)
-        c_view = Map.get(views, :c)
+      after 8_000 -> 
+       
 
-        assert(!Enum.member?(a_view, :b) == true)
-        assert(!Enum.member?(c_view, :b) == true)
-      
-    end
+        client =
+          spawn(:client, fn ->
+            client = Dynamo.Client.new_client(:client, :a)
+          
+        Dynamo.Client.check_view(client, :a)
+        receive do 
+          {:a, view} -> assert(!Enum.member?(view, :b) == true)
+        end 
+        Dynamo.Client.check_view(client, :c)
+        receive do 
+          {:c, view} -> assert(!Enum.member?(view, :b) == true)
+        end 
+        end)
+
+        handle = Process.monitor(client)
+        # Timeout.
+        receive do
+          {:DOWN, ^handle, _, _, _} -> true
+        after
+          12_000 -> assert false
+        end
+      end
     
 
   after
     Emulation.terminate()
   end
+  
 end
 
 
