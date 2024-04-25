@@ -36,7 +36,18 @@ defmodule Dynamo do
     nonce: 0,
 
     read_quorum: 0,
-    write_qourum: 0
+    write_qourum: 0,
+
+    # gossip timer
+    gossip_timeout: 15_000,
+    gossip_timer: nil,
+    rtt_timeout: 400,
+    rtt_timer: nil,
+    no_ack_timeout: 800,
+    no_ack_timer: nil,
+    gossip_term: 0,
+    k: 2,
+    neighbour: nil
   )
 
   @doc """
@@ -188,6 +199,7 @@ defmodule Dynamo do
   def init_dynamo_node(state) do
     new_vclock = Map.put(state.vclock, whoami(), 0)
     state = %{state | vclock: new_vclock}
+    state = reset_gossip_timer(state)
     dynamo_node(state)
   end
 
@@ -195,6 +207,12 @@ defmodule Dynamo do
     state.view
     |> Enum.map(fn pid ->
       send(pid, message) end)
+  end
+
+  def broadcast_to_others(state, message) do
+    state.view
+    |> Enum.filter(fn pid -> pid != whoami() end)
+    |> Enum.map(fn pid -> send(pid, message) end)
   end
 
   def kv_store_get(state, key) do
@@ -218,6 +236,31 @@ defmodule Dynamo do
       %{state | vclock: combine_vector_clocks(state.vclock, clock),
                         kv_store: Map.put(state.kv_store, key, concurrent_vals)}
     end
+  end
+
+  # Save a handle to the gossip timer.
+  @spec save_gossip_timer(%Dynamo{}, reference()) :: %Dynamo{}
+  defp save_gossip_timer(state, timer) do
+    %{state | gossip_timer: timer}
+  end
+
+  @spec reset_gossip_timer(%Dynamo{}) :: %Dynamo{}
+  defp reset_gossip_timer(state) do
+    if state.gossip_timer != nil do
+      Emulation.cancel_timer(state.gossip_timer)
+    end
+    timer = Emulation.timer(state.gossip_timeout, :gossip_timeout)
+    state = save_gossip_timer(state, timer)
+    state
+  end
+
+  def get_random_neighbour(state) do
+    random_neighbour = state.view |> Enum.filter(fn pid -> pid != whoami() end) |> Enum.random()
+    state = %{state | gossip_term: state.gossip_term+1, neighbour: random_neighbour}
+    send(random_neighbour,{:ping,state.gossip_term})
+    rtt= Emulation.timer(state.rtt_timeout,:rtt_timeout)
+    no_ack= Emulation.timer(state.no_ack_timeout,:no_ack_timeout)
+    %{state | rtt_timer: rtt,no_ack_timer: no_ack}
   end
 
   def dynamo_node(state) do
@@ -319,10 +362,97 @@ defmodule Dynamo do
           end
         end
         dynamo_node(state)
+
+      :gossip_timeout -> 
+        IO.puts("gossip timeout in #{inspect(whoami())}")
+        state = reset_gossip_timer(state)
+        state = get_random_neighbour(state)
+        IO.puts("random node chosen #{inspect(state.neighbour)} by #{inspect(whoami())}")
+        dynamo_node(state)
+
+      {sender, {:ping, term}} -> 
+        IO.puts("ping received in #{inspect(whoami())} from #{inspect(sender)}")
+        send(sender, {:ack, state.neighbour, term})
+        dynamo_node(state)
+
+      {sender, {:ack, neighbour, term}} -> 
+        if term == state.gossip_term do
+          Emulation.cancel_timer(state.rtt_timer)
+          Emulation.cancel_timer(state.no_ack_timer)
+          broadcast_to_others(state, {neighbour, :running})
+          IO.puts("ack received in #{inspect(whoami())} from #{inspect(sender)}")
+
+          """
+          if(!Enum.member?(state.view, neighbour)) do
+            state = %{state | view: [state.view | neighbour]}
+            dynamo_node(state)
+          else
+            dynamo_node(state)
+          end
+          """
+          dynamo_node(state)
+        else
+          dynamo_node(state)
+        end
+
+      {sender, {node, :running}} ->
+              IO.puts("running received in #{inspect(whoami())} from #{inspect(sender)}")
+
+        if(!Enum.member?(state.view,  node)) do
+          state = %{state | view: state.view ++ [node]}
+          dynamo_node(state)
+        else
+          dynamo_node(state)
+        end
+
+      :rtt_timeout -> 
+      IO.puts("rtt timed out in node #{inspect(whoami())}")
+        neighbours = Enum.take_random(state.view, state.k)
+        message = {:ping_on_rtt, self(), state.neighbour, state.gossip_term}
+        neighbours |>  Enum.map(fn pid -> send(pid, message) end)
+        dynamo_node(state)
+
+      {sender,  {:ping_on_rtt, pinger, neighbour, term}} ->
+              IO.puts("ping_on_rtt received in #{inspect(whoami())} from #{inspect(sender)}")
+
+        send(neighbour, {:indirect_ping_on_rtt, neighbour, pinger, term})
+        dynamo_node(state)
+
+      {sender,  {:indirect_ping_on_rtt, neighbour, pinger, term}} ->
+              IO.puts("indirect_ping received in #{inspect(whoami())} from #{inspect(sender)}")
+
+        send(sender, {:indirect_ack_on_rtt, neighbour, pinger, term})
+        dynamo_node(state)
+
+      
+      {sender,  {:indirect_ack_on_rtt, neighbour, pinger, term}} ->
+              IO.puts("indirect_ack received in #{inspect(whoami())} from #{inspect(sender)}")
+
+        send(pinger, {:ack, term})
+        dynamo_node(state)
+
+      :no_ack_timer -> 
+              IO.puts("no ack timer  received in #{inspect(whoami())} ")
+
+        broadcast(state.view, {state.neighbour, :failed})
+        dynamo_node(state)
+        
+
+      {sender, {node, :failed}} ->
+              IO.puts("failed received in #{inspect(whoami())} from #{inspect(sender)}")
+
+        if(Enum.member?(state.view,  node)) do
+          state = %{state | view: List.delete(state.view,  node)}
+          dynamo_node(state)
+        else
+          dynamo_node(state)
+        end
+
+      {sender, :check_view} -> 
+              IO.puts("check view received in #{inspect(whoami())} ")
+
+        send(sender, state.view)
+        dynamo_node(state)
     end
   end
-
-
-
-
 end
