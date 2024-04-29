@@ -145,3 +145,47 @@ defmodule Dynamo.PutResponse do
     }
   end
 end
+
+#   defmodule Dynamo.SynchronizationRequest do
+#   alias __MODULE__
+#   @enforce_keys [:key, :value, :hash, :vector_clock]
+#   defstruct(
+#     key: nil,
+#     value: nil,
+#     hash: nil,
+#     vector_clock: nil
+#   )
+
+#   @spec new(non_neg_integer(),non_neg_integer(),non_neg_integer(), map())::
+#   %SynchronizationRequest{
+#     key: non_neg_integer(),
+#     value: non_neg_integer(),
+#     hash: non_neg_integer(),
+#     vector_clock: map()
+#   }
+#   def new(key, value, hash, vector_clock) do
+#     %SynchronizationRequest{
+#       key: key,
+#       value: value,
+#       hash: hash,
+#       vector_clock: vector_clock
+#     }
+#   end
+#   end
+
+# defmodule Dynamo.SynchronizationResponse do
+#   alias __MODULE__
+#   @enforce_keys [:succ]
+#   defstruct(
+#     succ
+#   )
+#   @spec new(boolean)::
+#   %SynchronizationResponse{
+#     success: boolean
+#   }
+#   def new(succ) do
+#     %SynchronizationResponse{
+#       success: succ
+#     }
+#   end
+# end

@@ -47,8 +47,37 @@ defmodule Dynamo do
     no_ack_timer: nil,
     gossip_term: 0,
     k: 2,
-    neighbour: nil
+    neighbour: nil,
+
+    min_merkle_timeout: 20_000,
+    max_merkle_timeout: 30_000,
+    merkle_timer: nil,
+    merkle_keys: nil,
+    merkle_hashtree: %{},
+    merkle_hash_table: %{}, #{key : {value,vector_clock,hash} },
+    merkle_children: list()
+
+
   )
+
+  @spec get_merkle_time(%Dynamo{}) :: non_neg_integer()
+  defp get_merkle_time(state) do
+    state.min_merkle_timeout +
+      :rand.uniform(
+        state.max_merkle_timeout -
+          state.min_merkle_timeout
+      )
+  end
+
+  @spec reset_merkle_timer(%Dynamo{}) :: %Dynamo{}
+  defp reset_merkle_timer(state) do
+    if state.merkle_timer != nil do
+      Emulation.cancel_timer(state.merkle_timer)
+    end
+    m_timeout = get_merkle_time(state)
+    m_timer = Emulation.timer(m_timeout, :merkle_timeout)
+    %{state | merkle_timer: m_timer}
+  end
 
   @doc """
   Create state for an initial Dynamo cluster. Each
@@ -200,6 +229,7 @@ defmodule Dynamo do
     new_vclock = Map.put(state.vclock, whoami(), 0)
     state = %{state | vclock: new_vclock}
     state = reset_gossip_timer(state)
+    state = reset_merkle_timer(state)
     dynamo_node(state)
   end
 
@@ -447,6 +477,19 @@ defmodule Dynamo do
         else
           dynamo_node(state)
         end
+
+      :merkle_timeout ->
+        keys = Map.keys(state.kv_store)
+        if keys != [] do
+          neighbour = state.view |> Enum.filter(fn pid -> pid != whoami() end) |> Enum.random()
+          send(neighbour, {:initiate_merkle_sync, state} )      
+        end 
+        state = reset_merkle_timer(state)
+        dynamo_node(state)
+
+      {sender, {:initiate_merkle_sync, sender_state}} -> 
+        state = sync_merkle_trees(state, sender_state, sender) # state = b's state, sender_state is a's state
+        dynamo_node(state)
 
       {sender, :check_view} -> 
               IO.puts("check view received in #{inspect(whoami())} ")
