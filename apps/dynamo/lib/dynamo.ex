@@ -390,9 +390,9 @@ defmodule Dynamo do
             dynamo_node(state)
           else
             return_vals = Enum.map(non_stale_values, fn {v, _} -> v end)
-                        IO.puts("sending get response to #{inspect(client)} #{inspect(sender)}")
+                        IO.puts("sending get response to #{inspect(client)} #{inspect(whoami())} #{inspect(return_vals)}")
 
-            send(client, {:get, key, return_vals, sender})
+            send(client, {:get, key, return_vals, whoami()})
             state = %{state | response_count: Map.delete(state.response_count, nonce), value_version: Map.delete(state.value_version,nonce)}
 
             dynamo_node(state)

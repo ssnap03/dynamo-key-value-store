@@ -122,7 +122,7 @@ defmodule DynamoTest do
 
     client =
       spawn(:client, fn ->
-        client = Dynamo.Client.new_client(:client, :b)
+        client = Dynamo.Client.new_client(:client, :a)
       
      Dynamo.Client.set(client, :a, "a", "100")
      receive do 
@@ -149,22 +149,22 @@ defmodule DynamoTest do
       after 4_000 -> 
        
 
-        client =
+        client2 =
           spawn(:client2, fn ->
-            client = Dynamo.Client.new_client(:client2, :b)
-          
-        Dynamo.Client.get(client, :b, "a")
+              Dynamo.Client.new_client(:client2, :b)
+                 end)
+ 
+        Dynamo.Client.get(client2, :b, "a")
         receive do 
-        {:get, key, vals, :b} -> IO.puts("hello i'm here")
+         {:get, key, vals, :b} -> IO.puts("hello i'm here")
                                    assert Enum.at(vals, 0) == "100"
         end 
-        Dynamo.Client.get(client, :b, "b")
+        Dynamo.Client.get(client2, :b, "b")
         receive do 
         {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "200" 
         end 
-        end)
 
-        handle = Process.monitor(client)
+        handle = Process.monitor(client2)
         # Timeout.
         receive do
           {:DOWN, ^handle, _, _, _} -> true
