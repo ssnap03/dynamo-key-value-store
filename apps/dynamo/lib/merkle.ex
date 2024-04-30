@@ -15,9 +15,7 @@ defmodule Dynamo.Merkle do
   @spec get_keys(%Dynamo{}) :: [any()]
   def get_keys(state) do
     key_list = Map.keys(state.kv_store)
-    IO.puts("here #{inspect(key_list)}")
     sorted_keys = Enum.sort(key_list)
-        IO.puts("there #{inspect(sorted_keys)}")
 
     sorted_keys
   end
@@ -34,36 +32,43 @@ defmodule Dynamo.Merkle do
     state.merkle_hash_table |> Enum.find(fn {key, v} -> v.hash == val end)
   end
 
-   @spec hash_function(String.t()) :: String.t()
-  def hash_function(metadata) do
-    MerkleTree.Crypto.hash(metadata,:md5)
-  end
 
   @spec update_merkle_tree(%Dynamo{}, non_neg_integer(), any(), non_neg_integer(), map(), atom()):: %Dynamo{}
   def update_merkle_tree(state, key, value, hash, vector_clock, sender) do
     state =
       if Map.has_key?(state.merkle_hash_table, key) do
-        if Map.get(vector_clock, sender) >= Map.get(state.merkle_hash_table,key).vector_clock[sender] do
-          vclock = Map.replace!(state.merkle_hash_table[key].vector_clock, sender, vector_clock[sender])
+        IO.puts("has key #{inspect(key)}")
+        state = if Map.get(vector_clock, sender) >= Map.get(state.merkle_hash_table,key).vector_clock[sender] do
+          IO.puts("sender has updated #{inspect(key)}")
+
+          vclock = Map.put(state.merkle_hash_table[key].vector_clock, sender, vector_clock[sender])
           temp_hash_entry = state.merkle_hash_table[key]
           temp_hash_entry = %{temp_hash_entry | vector_clock: vclock, value: value, hash: hash}
-          temp_hash_table = Map.replace!(state.merkle_hash_table, key, temp_hash_entry)
+          temp_hash_table = Map.put(state.merkle_hash_table, key, temp_hash_entry)
           %{state | merkle_hash_table: temp_hash_table,
-            kv_store: Map.put(state.kv_store, key, value) }
+            kv_store: Map.put(state.kv_store, key, [{value, vclock}]) }
         else
-          state 
+          IO.puts("sender has stale key #{inspect(key)}")
         end
+
+          state 
+        
       else
+        IO.puts("no key #{inspect(key)} #{inspect(value)} #{inspect(hash)}")
+
         temp_hash_entry = Dynamo.HashTableEntry.putObject(value, vector_clock, hash)
         temp_hash_table = Map.put(state.merkle_hash_table, key, temp_hash_entry)
         %{state | merkle_hash_table: temp_hash_table,
-            kv_store: Map.put(state.kv_store, key, value)}
+            kv_store: Map.put(state.kv_store, key, [{value, vector_clock}])}
       end
 
+    IO.puts("hash table outside #{inspect(state.merkle_hash_table)}")
     keys = get_keys(state)
     values = get_values(state, keys)
-    new_hash_tree = MerkleTree.new(values, &hash_function/1)
+    new_hash_tree = MerkleTree.new(values, [{:default_data_block, "dummy"}])
     state = %{state | merkle_tree: new_hash_tree}
+    IO.puts("new hash tree #{inspect(state.merkle_tree)}")
+    state
   end
 
 
@@ -88,25 +93,48 @@ defmodule Dynamo.Merkle do
   
 
   def recurse_merkle_tree([head_b| tail_b], [head_a| tail_a], b_state, a_state, sender) do #sender is :a
-    if(head_b.value == head_a.value) do 
-            recurse_merkle_tree(tail_b, tail_a, b_state, a_state, sender)
+    state = if(head_b.value == head_a.value) do 
+            state = recurse_merkle_tree(tail_b, tail_a, b_state, a_state, sender)
+            state
     else 
-        if length(head_b.root.children)==0 do 
+        state = if length(head_b.children)==0 && length(head_a.children)==0 do 
+            IO.puts("retrieve hash list #{inspect(a_state.merkle_tree)}")
+            IO.puts("retrieve hash tree #{inspect(a_state.merkle_hash_table)}")
+            IO.puts("retrieving #{inspect(head_a.value)}")
+
             {key,entry} = retrieve_key_value(a_state, head_a.value)
-            update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
+            IO.puts("here adding key #{inspect(key)}")
+
+            state = update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
+            state
         else 
-            recurse_merkle_tree(tail_b++head_b.root.children, tail_a++head_a.root.children, b_state, a_state, sender)
+            state = recurse_merkle_tree(tail_b++head_b.children, tail_a++head_a.children, b_state, a_state, sender)
+            state 
         end
+        state
     end 
+    state
 end
 
 def recurse_merkle_tree([], [head_a| tail_a], b_state, a_state, sender) do #sender is :a
-    recurse_merkle_tree([], tail_a++head_a.root.children, b_state, a_state, sender)
+    state = if length(head_a.children)==0 && head_a.value !="a2a6c140e4225d5a032ea3650b76a0458cf77905c4b118789ab222d4597a77c5" do 
+      {key,entry} = retrieve_key_value(a_state, head_a.value)
+      IO.puts("there adding key #{inspect(key)}")
+      state = update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
+      state
+    else
+    state = recurse_merkle_tree([], tail_a++head_a.children, b_state, a_state, sender)
+    state
+    end 
+    state
   end
 
 def recurse_merkle_tree([], [head_a| []], b_state, a_state, sender) do #sender is :a
     {key,entry} = retrieve_key_value(a_state, head_a.value)
-    update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
+    IO.puts("where adding key #{inspect(key)}")
+
+    state = update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
+    state
   end
 
 def recurse_merkle_tree(list_b, [], b_state, a_state, sender) do #sender is :a
@@ -123,15 +151,26 @@ end
   def sync_merkle_trees(b_state, a_state, sender) do
     #b_root = b_state.merkle_tree.root()
     #a_root = a_state.merkle_tree.root()
-    if b_state.merkle_tree == %{} do 
+    # IO.puts("in sync 
+    #     receiver's tree #{inspect(b_state.merkle_tree)}")
+    #             IO.puts("sender's tree #{inspect(a_state.merkle_tree)}")
+    #             IO.puts("kv store #{inspect(b_state.kv_store)}")
+    state = if b_state.merkle_tree == %{} do 
       %{b_state | merkle_tree: a_state.merkle_tree, kv_store: a_state.kv_store, merkle_hash_table: a_state.merkle_hash_table}
     else
-    if b_state.merkle_tree.root.value != a_state.merkle_tree.root.value do 
-        recurse_merkle_tree(b_state.merkle_tree.root.children, a_state.merkle_tree.root.children, b_state, a_state, sender)
+    state = if b_state.merkle_tree.root.value != a_state.merkle_tree.root.value do 
+        state = recurse_merkle_tree(b_state.merkle_tree.root.children, a_state.merkle_tree.root.children, b_state, a_state, sender)
+        # IO.puts("\n\n done sync 
+        # receiver's tree #{inspect(b_state.merkle_tree)} \n ")
+        #         IO.puts("sender's tree #{inspect(a_state.merkle_tree)} \n")
+        #         IO.puts("kv store #{inspect(b_state.kv_store)} \n")
+        state
     else 
         b_state 
     end
+    state
     end
+    state
 end
 end
 

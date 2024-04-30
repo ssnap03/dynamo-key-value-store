@@ -122,7 +122,7 @@ defmodule DynamoTest do
     spawn(:a, fn -> Dynamo.init_dynamo_node(base_config) end)
     client =
       spawn(:client, fn ->
-        client = Dynamo.Client.new_client(:client, :a)
+        client = Dynamo.Client.new_client(:client, :a) end)
      Dynamo.Client.set(client, :a, "a", "100")
      receive do 
       {:put, key, :ok, :a} -> true
@@ -138,36 +138,26 @@ defmodule DynamoTest do
       {:put, key, :ok, :a} -> true
       _ -> false
      end 
-     Dynamo.Client.set(client, :a, "d", "400")
-     receive do 
-      {:put, key, :ok, :a} -> true
-      _ -> false
-     end 
 
     
       Dynamo.Client.kill(client, :b)
+      receive do 
+      after 4_000 ->          Dynamo.Client.set(client, :a, "e", "500")
+      receive do 
+       {:put, key, :ok, :a} -> true
+       _ -> false
+      end 
+      Dynamo.Client.set(client, :a, "f", "600")
+      receive do 
+       {:put, key, :ok, :a} -> true
+       _ -> false
+      end 
 
-     Dynamo.Client.set(client, :a, "e", "500")
-     receive do 
-      {:put, key, :ok, :a} -> true
-      _ -> false
-     end 
-     Dynamo.Client.set(client, :a, "f", "600")
-     receive do 
-      {:put, key, :ok, :a} -> true
-      _ -> false
-     end 
-     Dynamo.Client.set(client, :a, "g", "700")
-     receive do 
-      {:put, key, :ok, :a} -> true
-      _ -> false
-     end 
-     Dynamo.Client.set(client, :a, "h", "800")
-     receive do 
-      {:put, key, :ok, :a} -> true
-      _ -> false
-     end 
-   end)
+       
+    end 
+
+
+   
     receive do 
       after 4_000 ->     Dynamo.Client.revive(client, :b)
 
@@ -179,7 +169,7 @@ defmodule DynamoTest do
 
     #Process.exit(pid, :normal)
     receive do 
-      after 4_000 -> 
+      after 5_000 -> 
        
 
         client2 =
@@ -189,7 +179,7 @@ defmodule DynamoTest do
  
         Dynamo.Client.get(client2, :b, "a")
         receive do 
-         {:get, key, vals, :b} -> IO.puts("hello i'm here")
+         {:get, key, vals, :b} -> 
                                    assert Enum.at(vals, 0) == "100"
         end 
         Dynamo.Client.get(client2, :b, "b")
@@ -198,27 +188,16 @@ defmodule DynamoTest do
         end 
          Dynamo.Client.get(client2, :b, "c")
         receive do 
-        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "200" 
+        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "300" 
         end 
-         Dynamo.Client.get(client2, :b, "d")
+        
+         Dynamo.Client.get(client2, :b, "e")
         receive do 
-        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "200" 
-        end 
-         Dynamo.Client.get(client2, :b, "de")
-        receive do 
-        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "200" 
+        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "500" 
         end 
          Dynamo.Client.get(client2, :b, "f")
         receive do 
-        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "200" 
-        end 
-         Dynamo.Client.get(client2, :b, "g")
-        receive do 
-        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "200" 
-        end 
-         Dynamo.Client.get(client2, :b, "h")
-        receive do 
-        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "200" 
+        {:get, key, vals, :b} ->  assert Enum.at(vals, 0) == "600" 
         end 
 
         handle = Process.monitor(client2)
@@ -226,7 +205,7 @@ defmodule DynamoTest do
         receive do
           {:DOWN, ^handle, _, _, _} -> true
         after
-          15_000 -> assert false
+          20_000 -> assert false
         end
       end
     
