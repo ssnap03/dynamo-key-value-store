@@ -45,4 +45,10 @@ defmodule Dynamo.Client do
       send(replica,:check_view)
 
     end
+
+    # def check_kv_store(client,replica) do
+  
+    #   send(replica,:check_kv_store)
+
+    # end
   end

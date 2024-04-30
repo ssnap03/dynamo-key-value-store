@@ -5,15 +5,20 @@ defmodule Dynamo.Merkle do
 
   # given a list of keys, extract the corresponding values from the hash table
   @spec get_values(%Dynamo{}, [any()]) :: [any()]
-  defp get_values(state, keys) do
-    Enum.map(keys, fn k -> state.merkle_hash_table[k].value end)
+  def get_values(state, keys) do
+    Enum.map(keys, fn k -> l = Map.get(state.kv_store,k)
+                            {v,c} = Enum.at(l,length(l)-1)
+                            v end)
   end
   
   # given a list of keys, extract the corresponding values from the hash table
   @spec get_keys(%Dynamo{}) :: [any()]
-  defp get_keys(state) do
+  def get_keys(state) do
     key_list = Map.keys(state.kv_store)
+    IO.puts("here #{inspect(key_list)}")
     sorted_keys = Enum.sort(key_list)
+        IO.puts("there #{inspect(sorted_keys)}")
+
     sorted_keys
   end
 
@@ -25,8 +30,8 @@ defmodule Dynamo.Merkle do
 
 
   @spec retrieve_key_value(%Dynamo{}, non_neg_integer())::{any(),%Dynamo.HashTableEntry{}}
-  def find_key_value_from_hash(state,val) do
-    state.merkle_hash_table |> Enum.find(fn {key, v} -> v.value == val end)
+  def retrieve_key_value(state,val) do
+    state.merkle_hash_table |> Enum.find(fn {key, v} -> v.hash == val end)
   end
 
    @spec hash_function(String.t()) :: String.t()
@@ -62,32 +67,32 @@ defmodule Dynamo.Merkle do
   end
 
 
-@spec sync_merkle_trees(%Dynamo{}, atom()) :: any()
-  def sync_merkle_trees(state, neighbour) do
+# @spec sync_merkle_trees(%Dynamo{}, atom()) :: any()
+#   def sync_merkle_trees(state, neighbour) do
    
-    merkle_tree_root = state.merkle_tree.root()
-    state = %{state | merkle_children : merkle_tree_root.children}
+#     merkle_tree_root = state.merkle_tree.root()
+#     state = %{state | merkle_children : merkle_tree_root.children}
 
-    if List.first(state.merkle_children) == nil do
-      hash = hash_tree_root.value
-      {key,entry} = retrieve_key_value(state, hash)
-      updated_hash_table_req = Dynamo.SynchronizationRequest.new(key,entry.value,entry.hash,entry.vector_clock)
-      send(neighbour, updated_hash_table_req)
-      state
-    else
-        left_child = List.first(state.merkle_children)
-        send(neighbour,{:MTCheck, hash_tree_root_left_child})
-        state
-    end
-  end
+#     if List.first(state.merkle_children) == nil do
+#       hash = hash_tree_root.value
+#       {key,entry} = retrieve_key_value(state, hash)
+#       updated_hash_table_req = Dynamo.SynchronizationRequest.new(key,entry.value,entry.hash,entry.vector_clock)
+#       send(neighbour, updated_hash_table_req)
+#       state
+#     else
+#         left_child = List.first(state.merkle_children)
+#         send(neighbour,{:MTCheck, hash_tree_root_left_child})
+#         state
+#     end
+#   end
   
 
-  defp recurse_merkle_tree([head_b| tail_b], [head_a| tail_a], b_state, a_state, sender) do #sender is :a
-    if(head_b.value() == head_a.value()) do 
+  def recurse_merkle_tree([head_b| tail_b], [head_a| tail_a], b_state, a_state, sender) do #sender is :a
+    if(head_b.value == head_a.value) do 
             recurse_merkle_tree(tail_b, tail_a, b_state, a_state, sender)
     else 
         if length(head_b.children)==0 do 
-            {key,entry} = retrieve_key_value(a_state, head_a.value())
+            {key,entry} = retrieve_key_value(a_state, head_a.value)
             update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
         else 
             recurse_merkle_tree(tail_b++head_b.children, tail_a++head_a.children, b_state, a_state, sender)
@@ -96,14 +101,18 @@ defmodule Dynamo.Merkle do
 end
 
 
-defp recurse_merkle_tree([], [head_a| []], b_state, a_state, sender) do #sender is :a
-    {key,entry} = retrieve_key_value(a_state, head_a.value())
+def recurse_merkle_tree([], [head_a| []], b_state, a_state, sender) do #sender is :a
+    {key,entry} = retrieve_key_value(a_state, head_a.value)
     update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
+  end
 
-defp recurse_merkle_tree(list_b, [], b_state, a_state, sender) do #sender is :a
+def recurse_merkle_tree(list_b, [], b_state, a_state, sender) do #sender is :a
     b_state
+end
 
-
+def recurse_merkle_tree([], [], b_state, a_state, sender) do #sender is :a
+    b_state
+end
   
     
 
@@ -111,14 +120,17 @@ defp recurse_merkle_tree(list_b, [], b_state, a_state, sender) do #sender is :a
   def sync_merkle_trees(b_state, a_state, sender) do
     #b_root = b_state.merkle_tree.root()
     #a_root = a_state.merkle_tree.root()
-    if b_state.merkle_tree.root().value() != a_state.merkle_tree.root().value() do 
+    if b_state.merkle_tree == %{} do 
+      %{b_state | merkle_tree: a_state.merkle_tree, kv_store: a_state.kv_store, merkle_hash_table: a_state.merkle_hash_table}
+    else
+    if b_state.merkle_tree.root.value != a_state.merkle_tree.root.value do 
         recurse_merkle_tree(b_state.merkle_tree.children, a_state.merkle_tree.children, b_state, a_state, sender)
     else 
         b_state 
     end
+    end
 end
-
-
+end
 
 
 
