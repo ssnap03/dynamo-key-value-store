@@ -37,6 +37,7 @@ defmodule Dynamo do
 
     read_quorum: 0,
     write_qourum: 0,
+    status: :up,
 
     # gossip timer
     gossip_timeout: 4000,
@@ -321,7 +322,14 @@ defmodule Dynamo do
 
   def dynamo_node(state) do
     receive do
+      {sender, :kill} -> state = %{state | status: :down} 
+                          dynamo_node(state)
+      {sender, :revive} -> state = %{state | status: :up} 
+                          dynamo_node(state)
       {sender, {:get, key}} ->
+        if(state.status == :down) do
+          dynamo_node(state)
+        end
 
         nnc = state.nonce + 1
 
@@ -337,6 +345,9 @@ defmodule Dynamo do
         dynamo_node(state)
 
       {sender, {:put, key, v}} ->
+      if(state.status == :down) do
+          dynamo_node(state)
+      end
 
         state = update_vector_clock(state)
         state = %{state | nonce: state.nonce+1}
@@ -354,6 +365,9 @@ defmodule Dynamo do
         key: key,
         nonce: nonce
       }} ->
+      if(state.status == :down) do
+          dynamo_node(state)
+      end
       IO.puts("received get request from #{inspect(sender)}")
         msg = Dynamo.GetResponse.new(key, kv_store_get(state, key), nonce, true)
         send(sender, msg)
@@ -365,6 +379,9 @@ defmodule Dynamo do
         value: value,
         nonce: nonce
       }} ->
+      if(state.status == :down)  do
+          dynamo_node(state)
+      end
         state = kv_store_put(state,key,value)
         msg = Dynamo.PutResponse.new(key,nonce,true)
         send(sender,msg)
@@ -377,7 +394,9 @@ defmodule Dynamo do
         nonce: nonce,
         success: succ
       }} ->
-
+      if(state.status == :down) do
+          dynamo_node(state)
+      end
         if Map.has_key?(state.response_count, nonce) do
           #IO.puts("#{inspect(Map.get(state.response_count, nonce))}")
           {count, client} = Map.get(state.response_count, nonce)
@@ -406,6 +425,9 @@ defmodule Dynamo do
         nonce: nonce,
         success: succ
       }} ->
+        if(state.status == :down) do
+          dynamo_node(state)
+        end
 
         if Map.has_key?(state.response_count, nonce) do
           {count, client} = Map.get(state.response_count, nonce)
@@ -424,6 +446,10 @@ defmodule Dynamo do
         dynamo_node(state)
 
       :gossip_timeout -> 
+        if(state.status == :down) do
+          dynamo_node(state)
+      end
+
         IO.puts("gossip timeout in #{inspect(whoami())}")
         state = reset_gossip_timer(state)
         state = get_random_neighbour(state)
@@ -431,11 +457,19 @@ defmodule Dynamo do
         dynamo_node(state)
 
       {sender, {:ping, term}} -> 
+        if(state.status == :down) do
+          dynamo_node(state)
+        end
+
         IO.puts("ping received in #{inspect(whoami())} from #{inspect(sender)}")
         send(sender, {:ack, state.neighbour, term})
         dynamo_node(state)
 
       {sender, {:ack, neighbour, term}} -> 
+        if(state.status == :down) do
+          dynamo_node(state)
+        end
+
         if term == state.gossip_term do
           Emulation.cancel_timer(state.rtt_timer)
           Emulation.cancel_timer(state.no_ack_timer)
@@ -456,6 +490,9 @@ defmodule Dynamo do
         end
 
       {sender, {node, :running}} ->
+       if(state.status == :down) do
+          dynamo_node(state)
+        end
               IO.puts("running received in #{inspect(whoami())} from #{inspect(sender)}")
 
         if(!Enum.member?(state.view,  node)) do
@@ -466,6 +503,9 @@ defmodule Dynamo do
         end
 
       :rtt_timeout -> 
+      if(state.status == :down) do
+          dynamo_node(state)
+      end
       IO.puts("rtt timed out in node #{inspect(whoami())}")
         neighbours = Enum.take_random(state.view, state.k)
         message = {:ping_on_rtt, self(), state.neighbour, state.gossip_term}
@@ -473,12 +513,18 @@ defmodule Dynamo do
         dynamo_node(state)
 
       {sender,  {:ping_on_rtt, pinger, neighbour, term}} ->
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
               IO.puts("ping_on_rtt received in #{inspect(whoami())} from #{inspect(sender)}")
 
         send(neighbour, {:indirect_ping_on_rtt, neighbour, pinger, term})
         dynamo_node(state)
 
       {sender,  {:indirect_ping_on_rtt, neighbour, pinger, term}} ->
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
               IO.puts("indirect_ping received in #{inspect(whoami())} from #{inspect(sender)}")
 
         send(sender, {:indirect_ack_on_rtt, neighbour, pinger, term})
@@ -486,12 +532,18 @@ defmodule Dynamo do
 
       
       {sender,  {:indirect_ack_on_rtt, neighbour, pinger, term}} ->
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
               IO.puts("indirect_ack received in #{inspect(whoami())} from #{inspect(sender)}")
 
         send(pinger, {:ack, term})
         dynamo_node(state)
 
       :no_ack_timeout -> 
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
               IO.puts("no ack timer  received in #{inspect(whoami())} ")
 
         broadcast(state, {state.neighbour, :failed})
@@ -499,6 +551,9 @@ defmodule Dynamo do
         
 
       {sender, {node, :failed}} ->
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
               IO.puts("failed received in #{inspect(whoami())} from #{inspect(sender)}")
 
         if(Enum.member?(state.view,  node)) do
@@ -509,16 +564,23 @@ defmodule Dynamo do
         end
 
       :merkle_timeout ->
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
       IO.puts("received merkle timeout in #{inspect(whoami())}")
         keys = Map.keys(state.kv_store)
         if keys != [] do
           neighbour = state.view |> Enum.filter(fn pid -> pid != whoami() end) |> Enum.random()
-          send(neighbour, {:initiate_merkle_sync, state} )      
+          #TODO replace :b with neighbour send(neighbour, {:initiate_merkle_sync, state} )     
+           send(:b, {:initiate_merkle_sync, state} )
         end 
         state = reset_merkle_timer(state)
         dynamo_node(state)
 
       {sender, {:initiate_merkle_sync, sender_state}} -> 
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
             IO.puts("received merkle sync request in #{inspect(whoami())} from #{inspect(sender)}")
         IO.puts("receiver's tree #{inspect(state.merkle_tree)}")
                 IO.puts("sender's tree #{inspect(sender_state.merkle_tree)}")
@@ -529,6 +591,9 @@ defmodule Dynamo do
         dynamo_node(state)
 
       {sender, :check_view} -> 
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
               IO.puts("check view received in #{inspect(whoami())} ")
               IO.puts("sending #{inspect(state.view)}")
 
@@ -536,6 +601,9 @@ defmodule Dynamo do
         dynamo_node(state)
 
       {sender, :check_kv_store} -> 
+      if(state.status == :down) do
+          dynamo_node(state)
+          end
               IO.puts("check kv store received in #{inspect(whoami())} ")
               IO.puts("sending #{inspect(state.kv_store)}")
 

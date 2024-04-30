@@ -91,15 +91,18 @@ defmodule Dynamo.Merkle do
     if(head_b.value == head_a.value) do 
             recurse_merkle_tree(tail_b, tail_a, b_state, a_state, sender)
     else 
-        if length(head_b.children)==0 do 
+        if length(head_b.root.children)==0 do 
             {key,entry} = retrieve_key_value(a_state, head_a.value)
             update_merkle_tree(b_state, key, entry.value, entry.hash, entry.vector_clock, sender )
         else 
-            recurse_merkle_tree(tail_b++head_b.children, tail_a++head_a.children, b_state, a_state, sender)
+            recurse_merkle_tree(tail_b++head_b.root.children, tail_a++head_a.root.children, b_state, a_state, sender)
         end
     end 
 end
 
+def recurse_merkle_tree([], [head_a| tail_a], b_state, a_state, sender) do #sender is :a
+    recurse_merkle_tree([], tail_a++head_a.root.children, b_state, a_state, sender)
+  end
 
 def recurse_merkle_tree([], [head_a| []], b_state, a_state, sender) do #sender is :a
     {key,entry} = retrieve_key_value(a_state, head_a.value)
@@ -124,7 +127,7 @@ end
       %{b_state | merkle_tree: a_state.merkle_tree, kv_store: a_state.kv_store, merkle_hash_table: a_state.merkle_hash_table}
     else
     if b_state.merkle_tree.root.value != a_state.merkle_tree.root.value do 
-        recurse_merkle_tree(b_state.merkle_tree.children, a_state.merkle_tree.children, b_state, a_state, sender)
+        recurse_merkle_tree(b_state.merkle_tree.root.children, a_state.merkle_tree.root.children, b_state, a_state, sender)
     else 
         b_state 
     end

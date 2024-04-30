@@ -46,6 +46,18 @@ defmodule Dynamo.Client do
 
     end
 
+    def kill(client,replica) do
+  
+      send(replica,:kill)
+
+    end
+
+    def revive(client,replica) do
+  
+      send(replica,:revive)
+
+    end
+
     # def check_kv_store(client,replica) do
   
     #   send(replica,:check_kv_store)
