@@ -12,8 +12,7 @@ defmodule DynamoTest do
     
 #     Emulation.append_fuzzers([Fuzzers.delay(50)])
 #     view = [:a, :b, :c]
-#     base_config =
-#       Dynamo.new_configuration(view, 1, 1)
+#     base_config = Dynamo.new_configuration(view, 1, 1, 400_000, 200_000, 400_000)
 
 #     spawn(:b, fn -> Dynamo.init_dynamo_node(base_config) end)
 #     spawn(:c, fn -> Dynamo.init_dynamo_node(base_config) end)
@@ -68,8 +67,7 @@ defmodule DynamoTest do
     
 #     Emulation.append_fuzzers([Fuzzers.delay(50)])
 #     view = [:a, :b, :c]
-#     base_config =
-#       Dynamo.new_configuration(view, 1, 1)
+#     base_config = Dynamo.new_configuration(view, 1, 1, 400_000, 200_000, 400_000)
 
 #     #pid = spawn(:b, fn -> Dynamo.init_dynamo_node(base_config) end)
 #     spawn(:c, fn -> Dynamo.init_dynamo_node(base_config) end)
@@ -113,8 +111,7 @@ defmodule DynamoTest do
     
     Emulation.append_fuzzers([Fuzzers.delay(50)])
     view = [:a, :b, :c]
-    base_config =
-      Dynamo.new_configuration(view, 1, 1)
+    base_config = Dynamo.new_configuration(view, 1, 1, 400_000, 200_000, 400_000)
 
     #pid = spawn(:b, fn -> Dynamo.init_dynamo_node(base_config) end)
     spawn(:c, fn -> Dynamo.init_dynamo_node(base_config) end)

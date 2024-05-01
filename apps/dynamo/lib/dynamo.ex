@@ -87,17 +87,26 @@ defmodule Dynamo do
   @spec new_configuration(
           [atom()],
           non_neg_integer(),
+          non_neg_integer(),
+          non_neg_integer(),
+          non_neg_integer(),
           non_neg_integer()
         ) :: %Dynamo{}
   def new_configuration(
         view,
         read_quorum,
-        write_quorum
+        write_quorum,
+        gossip_t,
+        min_mt,
+        max_mt
       ) do
     %Dynamo{
       view: view,
       read_quorum: read_quorum,
-      write_qourum: write_quorum
+      write_qourum: write_quorum,
+      gossip_timeout: gossip_t,
+      min_merkle_timeout: min_mt,
+      max_merkle_timeout: max_mt
     }
   end
 
@@ -556,7 +565,7 @@ defmodule Dynamo do
       if(state.status == :down) do
           dynamo_node(state)
           end
-              IO.puts("failed received in #{inspect(whoami())} from #{inspect(sender)}")
+              IO.puts("#{inspect(node)} failed received in #{inspect(whoami())} from #{inspect(sender)}")
 
         if(Enum.member?(state.view,  node)) do
           state = %{state | view: List.delete(state.view,  node)}
