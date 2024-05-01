@@ -40,7 +40,7 @@ defmodule Dynamo do
     status: :up,
 
     # gossip timer
-    gossip_timeout: 4000,
+    gossip_timeout: 400_000,
     gossip_timer: nil,
     rtt_timeout: 400,
     rtt_timer: nil,
@@ -50,8 +50,8 @@ defmodule Dynamo do
     k: 2,
     neighbour: nil,
 
-    min_merkle_timeout: 4000,
-    max_merkle_timeout: 8000,
+    min_merkle_timeout: 200_000,
+    max_merkle_timeout: 400_000,
     merkle_timer: nil,
     merkle_keys: nil,
     merkle_tree: %{},
@@ -132,7 +132,9 @@ defmodule Dynamo do
 
 
   def loop1(head1, [head2 | tail2], acc) do
-    if compare_vectors(head1.vc, head2.vc) != :before do
+    {v1,vc1} = head1
+    {v2,vc2} = head2
+    if compare_vectors(vc1, vc2) != :before do
       loop1(head1, tail2, acc)
     else
       acc
@@ -289,7 +291,7 @@ defmodule Dynamo do
 
     keys = Dynamo.Merkle.get_keys(state)
     values = Dynamo.Merkle.get_values(state, keys)
-    IO.puts("#{inspect(whoami())} #{inspect(keys)} #{inspect(values)}")
+    # IO.puts("#{inspect(whoami())} #{inspect(keys)} #{inspect(values)}")
     new_hash_tree = MerkleTree.new(values , [{:default_data_block, "dummy"}])
     state = %{state | merkle_tree: new_hash_tree}
     state
@@ -409,8 +411,8 @@ defmodule Dynamo do
             dynamo_node(state)
           else
             return_vals = Enum.map(non_stale_values, fn {v, _} -> v end)
-                        IO.puts("sending get response to #{inspect(client)} #{inspect(whoami())} #{inspect(return_vals)}")
-            IO.puts("returning from #{inspect(state.kv_store)}")
+                        IO.puts("sending get response to #{inspect(client)} #{inspect(whoami())} ")
+            # IO.puts("returning from #{inspect(state.kv_store)}")
             send(client, {:get, key, return_vals, whoami()})
             state = %{state | response_count: Map.delete(state.response_count, nonce), value_version: Map.delete(state.value_version,nonce)}
 
@@ -571,10 +573,11 @@ defmodule Dynamo do
         keys = Map.keys(state.kv_store)
         if keys != [] do
           neighbour = state.view |> Enum.filter(fn pid -> pid != whoami() end) |> Enum.random()
-          #TODO replace :b with neighbour send(neighbour, {:initiate_merkle_sync, state} ) 
-          if whoami()!=:b do    
-           send(:b, {:initiate_merkle_sync, state} )
-          end
+          #TODO replace :b with neighbour 
+          send(neighbour, {:initiate_merkle_sync, state} ) 
+          # if whoami()!=:b do    
+          #  send(:b, {:initiate_merkle_sync, state} )
+          # end
         end 
         state = reset_merkle_timer(state)
         dynamo_node(state)
@@ -588,10 +591,10 @@ defmodule Dynamo do
 
 
         state = Dynamo.Merkle.sync_merkle_trees(state, sender_state, sender) # state = b's state, sender_state is a's state
-        IO.puts("after update 
-        receiver's tree #{inspect(state.merkle_tree)}")
-                IO.puts("sender's tree #{inspect(sender_state.merkle_tree)}")
-                IO.puts("kv store #{inspect(state.kv_store)}")
+        # IO.puts("after update 
+        # receiver's tree #{inspect(state.merkle_tree)}")
+        #         IO.puts("sender's tree #{inspect(sender_state.merkle_tree)}")
+        #         IO.puts("kv store #{inspect(state.kv_store)}")
         dynamo_node(state)
 
       {sender, :check_view} -> 
@@ -609,7 +612,7 @@ defmodule Dynamo do
           dynamo_node(state)
           end
               IO.puts("check kv store received in #{inspect(whoami())} ")
-              IO.puts("sending #{inspect(state.kv_store)}")
+              # IO.puts("sending #{inspect(state.kv_store)}")
 
         send(sender, state.kv_store)
         dynamo_node(state)
